@@ -235,3 +235,144 @@ BEGIN
 END //
 
 DELIMITER ;
+
+
+
+3. Solución Procedimiento: Crear Producto y Regalo Automático
+Conceptos clave que evalúa:
+
+LAST_INSERT_ID(): Cuando creas el producto, necesitas saber qué ID le ha dado la base de datos para poder meterlo luego en el pedido.
+
+Lógica Condicional: Crear el pedido SOLO si es para regalo.
+
+Búsqueda del "Más Antiguo": Usar ORDER BY id ASC LIMIT 1.
+
+SQL
+
+DELIMITER //
+
+CREATE PROCEDURE crear_producto_regalo (
+    -- Parámetros del nuevo producto
+    IN p_nombre VARCHAR(250),
+    IN p_descripcion TEXT,
+    IN p_precio DECIMAL(10, 2),
+    IN p_tipoId INT,
+    IN p_paraMenores BOOLEAN,
+    -- Parámetro "Interruptor" (¿Es regalo?)
+    IN p_esParaRegalo BOOLEAN
+)
+BEGIN
+    -- VARIABLES
+    DECLARE v_nuevoProductoId INT; -- Para guardar el ID del producto creado
+    DECLARE v_clienteAntiguoId INT; -- Para guardar el ID del cliente afortunado
+    DECLARE v_nuevoPedidoId INT;    -- Para guardar el ID del pedido de regalo
+
+    -- 1. EL AIRBAG (Transacción segura)
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+    -- PASO A: Validación de Precio (Regla de Negocio)
+    -- Si es para regalo (TRUE) Y vale más de 50... ERROR.
+    IF p_esParaRegalo = TRUE AND p_precio > 50 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No se permite crear un producto para regalo de más de 50€.';
+    END IF;
+
+    -- PASO B: Crear el Producto (Esto se hace SIEMPRE)
+    INSERT INTO Productos (nombre, descripcion, precioUnitario, tipoProductoId, puedeVenderseAMenores)
+    VALUES (p_nombre, p_descripcion, p_precio, p_tipoId, p_paraMenores);
+
+    -- ¡CRUCIAL! Capturamos el ID que acaba de nacer
+    SET v_nuevoProductoId = LAST_INSERT_ID();
+
+    -- PASO C: La Lógica del Regalo (Solo si p_esParaRegalo es TRUE)
+    IF p_esParaRegalo = TRUE THEN
+
+        -- 1. Buscamos al cliente más antiguo (El que tiene el ID más bajo)
+        SELECT id INTO v_clienteAntiguoId
+        FROM Clientes
+        ORDER BY id ASC -- De menor a mayor
+        LIMIT 1;        -- Solo quiero el primero
+
+        -- 2. Creamos un PEDIDO para ese cliente (Cabecera)
+        INSERT INTO Pedidos (clienteId, fechaRealizacion, direccionEntrega, comentarios)
+        VALUES (v_clienteAntiguoId, CURDATE(), 'Dirección Cliente', 'Regalo Promocional');
+
+        -- ¡CRUCIAL! Capturamos el ID del pedido nuevo
+        SET v_nuevoPedidoId = LAST_INSERT_ID();
+
+        -- 3. Creamos la LÍNEA DE PEDIDO (Detalle)
+        -- OJO: El enunciado dice "costes 0€".
+        INSERT INTO LineasPedido (pedidoId, productoId, unidades, precioUnitario)
+        VALUES (v_nuevoPedidoId, v_nuevoProductoId, 1, 0.00);
+
+    END IF;
+
+    -- Si llegamos aquí, todo ha ido bien. Guardamos.
+    COMMIT;
+
+END //
+
+DELIMITER ;
+
+
+
+Tema: Archivar y Borrar (Backup)
+
+Enunciado: "Crea un procedimiento para dar de baja a un empleado. Antes de borrarlo de la tabla Empleados, debe guardar sus datos (nombre y salario total ganado en su historia) en una tabla llamada ExEmpleados. Si el empleado tiene pedidos asignados activos (sin enviar), no se permite borrarlo."
+
+Dificultad: INSERT INTO ... SELECT + Validación de Dependencias (FOREIGN KEY lógica).
+
+SQL
+
+DELIMITER //
+
+CREATE PROCEDURE despedir_empleado (
+    IN p_empleadoId INT
+)
+BEGIN
+    DECLARE v_tienePendientes INT;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    START TRANSACTION;
+
+    -- 1. VALIDACIÓN: ¿Tiene pedidos sin enviar?
+    SELECT COUNT(*) INTO v_tienePendientes
+    FROM Pedidos
+    WHERE empleadoId = p_empleadoId AND fechaEnvio IS NULL;
+
+    IF v_tienePendientes > 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'No se puede despedir a un empleado con pedidos pendientes.';
+    END IF;
+
+    -- 2. ARCHIVAR: Copiar datos a la tabla histórica
+    -- Suponemos que la tabla ExEmpleados ya existe (id, nombre, totalVendido, fechaDespido)
+    INSERT INTO ExEmpleados (nombre, totalVendido, fechaDespido)
+    SELECT 
+        u.nombre, 
+        (SELECT SUM(lp.unidades * lp.precioUnitario) 
+         FROM Pedidos p JOIN LineasPedido lp ON p.id = lp.pedidoId 
+         WHERE p.empleadoId = p_empleadoId), -- Subconsulta para calcular ventas
+        CURDATE()
+    FROM Empleados e
+    JOIN Usuarios u ON e.usuarioId = u.id
+    WHERE e.id = p_empleadoId;
+
+    -- 3. BORRAR: Eliminar de la tabla original
+    DELETE FROM Empleados WHERE id = p_empleadoId;
+
+    COMMIT;
+END //
+
+DELIMITER ;

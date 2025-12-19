@@ -183,3 +183,142 @@ END //
 
 DELIMITER ;
 
+1. El Trigger "Lógico-Temporal" (Validación de fechas)
+El Enunciado: "Asegura que la fecha de envío de un pedido nunca sea anterior a la fecha de realización. Un pedido no puede viajar al pasado."
+
+¿Qué aprendes aquí? A comparar dos columnas de la misma fila (NEW contra NEW) dentro de un UPDATE.
+
+SQL
+
+DELIMITER //
+
+CREATE TRIGGER validar_fechas_pedido
+BEFORE UPDATE ON Pedidos
+FOR EACH ROW
+BEGIN
+    -- Solo comprobamos si están intentando poner una fecha de envío
+    IF NEW.fechaEnvio IS NOT NULL THEN
+        
+        -- Si la fecha de envío es MENOR (<) que la de realización... ERROR
+        IF NEW.fechaEnvio < NEW.fechaRealizacion THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Error: La fecha de envío no puede ser anterior a la fecha de realización.';
+        END IF;
+        
+    END IF;
+END //
+
+DELIMITER ;
+
+
+2. El Trigger "Protector de Historial" (Prohibido Borrar)
+El Enunciado: "No se puede eliminar una línea de pedido si el pedido ya ha sido enviado. Lo hecho, hecho está."
+
+¿Qué aprendes aquí?
+
+Usar BEFORE DELETE.
+
+Usar OLD.pedidoId (porque al borrar no existe NEW, solo existe lo que había antes).
+
+Consultar la tabla padre (Pedidos) para ver su estado.
+
+SQL
+
+DELIMITER //
+
+CREATE TRIGGER proteger_lineas_enviadas
+BEFORE DELETE ON LineasPedido
+FOR EACH ROW
+BEGIN
+    DECLARE fechaEnvioPedido DATE;
+
+    -- 1. Busco la fecha de envío del pedido al que pertenece esta línea
+    -- Uso OLD.pedidoId porque es la línea que voy a borrar
+    SELECT fechaEnvio INTO fechaEnvioPedido
+    FROM Pedidos
+    WHERE id = OLD.pedidoId;
+
+    -- 2. Si tiene fecha (no es NULL), es que ya salió. PROHIBIDO BORRAR.
+    IF fechaEnvioPedido IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Error: No se pueden borrar líneas de un pedido ya enviado.';
+    END IF;
+
+END //
+
+DELIMITER ;
+
+
+
+3. El Trigger "Autocompletar" (Facilitador)
+El Enunciado: "Si al insertar una línea de pedido el usuario pone el precio a 0 (o no lo sabe), el sistema debe copiar automáticamente el precio actual del producto."
+
+¿Qué aprendes aquí? A modificar el dato antes de guardarlo (SET NEW.campo = ...). Esto es súper útil y muy común en exámenes.
+
+SQL
+
+DELIMITER //
+
+CREATE TRIGGER autocompletar_precio
+BEFORE INSERT ON LineasPedido
+FOR EACH ROW
+BEGIN
+    DECLARE precioReal DECIMAL(10,2);
+
+    -- Si el usuario pone 0 o negativo, asumimos que quiere el precio oficial
+    IF NEW.precioUnitario <= 0 THEN
+        
+        -- 1. Buscamos el precio en la tabla Productos
+        SELECT precioUnitario INTO precioReal
+        FROM Productos
+        WHERE id = NEW.productoId;
+        
+        -- 2. ¡MAGIA! Cambiamos el valor que se va a guardar
+        SET NEW.precioUnitario = precioReal;
+        
+    END IF;
+END //
+
+DELIMITER ;
+
+
+
+4. El Trigger "Antifraude" (Validación cruzada compleja)
+El Enunciado: "Un empleado no puede ser asignado a un pedido si el cliente de ese pedido es él mismo (Un empleado no puede auto-atender sus compras personales)."
+
+¿Qué aprendes aquí? A cruzar tres tablas: Pedidos -> Empleados -> Usuarios vs Pedidos -> Clientes -> Usuarios.
+
+SQL
+
+DELIMITER //
+
+CREATE TRIGGER evitar_auto_atencion
+BEFORE UPDATE ON Pedidos
+FOR EACH ROW
+BEGIN
+    -- Solo comprobamos si hay un empleado asignado (NEW.empleadoId no es NULL)
+    IF NEW.empleadoId IS NOT NULL THEN
+        
+        DECLARE idUsuarioDelEmpleado INT;
+        DECLARE idUsuarioDelCliente INT;
+
+        -- 1. ¿Quién es el usuario detrás del empleado?
+        SELECT UsuarioId INTO idUsuarioDelEmpleado
+        FROM Empleados
+        WHERE id = NEW.empleadoId;
+
+        -- 2. ¿Quién es el usuario detrás del cliente?
+        SELECT UsuarioId INTO idUsuarioDelCliente
+        FROM Clientes
+        WHERE id = NEW.clienteId;
+
+        -- 3. Comparación: ¿Son la misma persona?
+        IF idUsuarioDelEmpleado = idUsuarioDelCliente THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Fraude: Un empleado no puede gestionar sus propios pedidos.';
+        END IF;
+
+    END IF;
+END //
+
+DELIMITER ;
