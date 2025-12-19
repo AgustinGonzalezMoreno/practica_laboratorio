@@ -74,3 +74,34 @@ CREATE TABLE LineasPedido (
     FOREIGN KEY (productoId) REFERENCES Productos(id),
     UNIQUE (pedidoId, productoId)
 );
+
+
+
+
+-- 1. LIMPIEZA PREVIA (Opcional pero recomendado para evitar errores al probar)
+DROP TABLE IF EXISTS [NOMBRE_TABLA];
+
+-- 2. CREACIÓN DE LA TABLA
+CREATE TABLE [NOMBRE_TABLA] (
+    -- A. IDENTIFICADOR (Casi siempre es igual)
+    id INT PRIMARY KEY AUTO_INCREMENT,
+
+    -- B. COLUMNAS DE DATOS (Rellena según el enunciado)
+    [nombre_columna_texto] VARCHAR(255) NOT NULL,
+    [nombre_columna_numero] INT NOT NULL DEFAULT 0,
+    [nombre_columna_fecha] DATE,
+    [nombre_columna_dinero] DECIMAL(10, 2) CHECK ([nombre_columna_dinero] >= 0),
+    
+    -- C. COLUMNAS PARA CLAVES FORÁNEAS (Solo si conecta con otra tabla)
+    [otraTablaId] INT NOT NULL,
+
+    -- D. RESTRICCIONES DE NEGOCIO (Validaciones extra)
+    -- Ejemplo: Un email único o una edad mínima
+    UNIQUE ([nombre_columna_texto]), 
+    CHECK ([nombre_columna_numero] > 0),
+
+    -- E. DEFINICIÓN DE CLAVES FORÁNEAS (Conexiones)
+    FOREIGN KEY ([otraTablaId]) REFERENCES [OTRA_TABLA](id)
+        ON DELETE [RESTRICT | CASCADE | SET NULL]
+        ON UPDATE [RESTRICT | CASCADE | SET NULL]
+);
